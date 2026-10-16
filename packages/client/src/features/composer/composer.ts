@@ -1,6 +1,7 @@
 import { COMPOSER_ATTR, COMPOSER_HIDDEN_ATTR, HOME_LAYOUT_STUDIO, MOBILE_PORTRAIT_ATTR, STATS_POSITION_CONTEXT } from '../../constants'
 import { DIALOG_TRIGGER_SELECTOR, MOBILE_PORTRAIT_SELECTOR, MOBILE_STATS_SELECTOR, PHASE_ATTRIBUTE } from '@dsh-claude-style/contracts/dom'
 import { observeSize } from '../../core/bus'
+import { requestFrame } from '../../core/frame'
 import { COMPOSER_STACK, cacheFirstMatch, closestComposerCard, findAccessTrigger, findComposerPlaceholder, findComposerSeat, findConversationScroller, observeComposerCards, observeComposerPlaceholders } from '../../core/host'
 import { composerRestyleRetired, readPrefs } from '../../core/prefs'
 import type { HostContext } from '../../core/host'
@@ -9,6 +10,7 @@ import type { FeatureUi } from '../../core/feature'
 import type manifest from './composer.manifest'
 import { closestFrom, setAttributeIfChanged } from '../../shared/dom'
 import { writeScroll } from '../../shared/scroll-owner'
+import { captureComposerCaret, focusKeepingComposerCaret } from '../../shared/composer-caret'
 import { createPlaceholderCopy } from './placeholder-copy'
 import { installWindowBlurMirror } from './selection-mirror'
 
@@ -542,9 +544,18 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
     if (!card) return
     if (closestFrom(target, 'button, [role="button"], [role="menu"], [role="radiogroup"], input, select')) return
     const input = card.querySelector<HTMLElement>('[data-composer-input]')
-    if (input && document.activeElement !== input) {
-      input.focus()
-    }
+    if (input === null || document.activeElement === input) return
+    // The host's own card press restores the caret through Lexical, and it
+    // runs after this pointerdown. Settle the press first and focus only when
+    // nothing else did: a bare focus here pre-empts the host and re-homes the
+    // selection to the start of the draft.
+    const caret = captureComposerCaret()
+    requestFrame({
+      write() {
+        if (!input.isConnected || document.activeElement === input) return
+        focusKeepingComposerCaret(input, caret)
+      },
+    })
   }
 
   /**
